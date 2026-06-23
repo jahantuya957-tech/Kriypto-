@@ -1,55 +1,54 @@
-import { db } from "../config/db.js";
+import { getAllSymbols, getCandles } from "./binance.service.js";
+import { runStrategy } from "../strategies/rsi_macd_sr.strategy.js";
+import { saveSignal } from "./signal.service.js";
 import { logger } from "../utils/logger.js";
 
-/**
- * Save trading signal into database
- */
-
-export const saveSignal = async (signal) => {
+export const runScanner = async () => {
   try {
-    const query = `
-      INSERT INTO signals (
-        symbol,
-        timeframe,
-        strategy,
-        signal,
-        entry_price,
-        stop_loss,
-        take_profit,
-        score,
-        grade,
-        status,
-        entry_time
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      RETURNING *
-    `;
+    logger.info("Scanner started...");
 
-    const values = [
-      signal.symbol,
-      signal.timeframe || "15m",
-      signal.strategy || "RSI_MACD_SR_CONFLUENCE",
-      signal.signal,
-      signal.entryPrice,
-      signal.stopLoss,
-      signal.takeProfit,
-      signal.score,
-      signal.grade,
-      "OPEN",
-      new Date()
-    ];
+    const symbols = await getAllSymbols();
 
-    const result = await db.query(query, values);
+    const usdtPairs = symbols
+      .filter((s) => s.endsWith("USDT"))
+      .slice(0, 200);
 
-    logger.info("Signal saved", {
-      symbol: signal.symbol,
-      signal: signal.signal,
-      score: signal.score
+    const signals = [];
+
+    for (const symbol of usdtPairs) {
+      try {
+        const candles = await getCandles(symbol, "15m", 100);
+
+        const signal = await runStrategy(symbol, candles);
+
+        if (signal && signal.score >= 70) {
+          
+          // 💾 SAVE TO DATABASE
+          const saved = await saveSignal(signal);
+
+          signals.push(saved || signal);
+
+          logger.info("SIGNAL STORED", {
+            symbol: signal.symbol,
+            signal: signal.signal,
+            score: signal.score,
+            grade: signal.grade
+          });
+        }
+
+      } catch (err) {
+        logger.warn(`Error processing ${symbol}`, err.message);
+      }
+    }
+
+    logger.info("Scanner finished", {
+      totalSignals: signals.length
     });
 
-    return result.rows[0];
+    return signals;
+
   } catch (err) {
-    logger.error("Failed to save signal", err.message);
-    return null;
+    logger.error("Scanner crashed", err.message);
+    return [];
   }
 };
