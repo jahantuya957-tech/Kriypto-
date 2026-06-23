@@ -1,31 +1,52 @@
 import { getAllSymbols, getCandles } from "./binance.service.js";
 import { runStrategy } from "../strategies/rsi_macd_sr.strategy.js";
+import { logger } from "../utils/logger.js";
 
 /**
- * Main scanner loop
+ * MAIN SCANNER ENGINE
+ * Scans 150–200 USDT pairs and generates signals
  */
+
 export const runScanner = async () => {
   try {
+    logger.info("Scanner started...");
+
     const symbols = await getAllSymbols();
 
-    // শুধু USDT pair রাখি
-    const usdtPairs = symbols.filter(s => s.endsWith("USDT")).slice(0, 200);
+    const usdtPairs = symbols
+      .filter((s) => s.endsWith("USDT"))
+      .slice(0, 200);
 
-    const results = [];
+    const signals = [];
 
     for (const symbol of usdtPairs) {
-      const candles = await getCandles(symbol, "15m", 100);
+      try {
+        const candles = await getCandles(symbol, "15m", 100);
 
-      const signal = await runStrategy(symbol, candles);
+        const signal = await runStrategy(symbol, candles);
 
-      if (signal && signal.score >= 70) {
-        results.push(signal);
+        if (signal && signal.score >= 70) {
+          signals.push(signal);
+
+          logger.info("SIGNAL FOUND", {
+            symbol: signal.symbol,
+            signal: signal.signal,
+            score: signal.score,
+            grade: signal.grade
+          });
+        }
+      } catch (err) {
+        logger.warn(`Error processing ${symbol}`, err.message);
       }
     }
 
-    return results;
+    logger.info("Scanner finished", {
+      totalSignals: signals.length
+    });
+
+    return signals;
   } catch (err) {
-    console.error("Scanner Error:", err.message);
+    logger.error("Scanner crashed", err.message);
     return [];
   }
 };
